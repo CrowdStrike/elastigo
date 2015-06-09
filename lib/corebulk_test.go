@@ -17,22 +17,17 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/araddon/gou"
-	"github.com/bmizerany/assert"
 	"log"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/araddon/gou"
+	"github.com/bmizerany/assert"
 )
 
 //  go test -bench=".*"
 //  go test -bench="Bulk"
-
-var (
-	buffers        = make([]*bytes.Buffer, 0)
-	totalBytesSent int
-	messageSets    int
-)
 
 func init() {
 	flag.Parse()
@@ -51,22 +46,36 @@ func closeInt(a, b int) bool {
 }
 
 func TestBulkIndexerBasic(t *testing.T) {
+	testIndex := "users"
+	var (
+		buffers        = make([]*bytes.Buffer, 0)
+		totalBytesSent int
+		messageSets    int
+	)
+
 	InitTests(true)
 	c := NewTestConn()
+
+	c.DeleteIndex(testIndex)
+
 	indexer := c.NewBulkIndexer(3)
 	indexer.Sender = func(buf *bytes.Buffer) error {
 		messageSets += 1
 		totalBytesSent += buf.Len()
 		buffers = append(buffers, buf)
-		//		log.Printf("buffer:%s", string(buf.Bytes()))
+		// log.Printf("buffer:%s", string(buf.Bytes()))
 		return indexer.Send(buf)
 	}
 	indexer.Start()
 
 	date := time.Unix(1257894000, 0)
-	data := map[string]interface{}{"name": "smurfs", "age": 22, "date": time.Unix(1257894000, 0).Format(time.RFC3339)}
+	data := map[string]interface{}{
+		"name": "smurfs",
+		"age":  22,
+		"date": "yesterday",
+	}
 
-	err := indexer.Index("users", "user", "1", "", &date, data, true)
+	err := indexer.Index(testIndex, "user", "1", "", &date, data, true)
 
 	waitFor(func() bool {
 		return len(buffers) > 0
@@ -74,11 +83,11 @@ func TestBulkIndexerBasic(t *testing.T) {
 	// part of request is url, so lets factor that in
 	//totalBytesSent = totalBytesSent - len(*eshost)
 	assert.T(t, len(buffers) == 1, fmt.Sprintf("Should have sent one operation but was %d", len(buffers)))
-	assert.T(t, indexer.NumErrors() == 0 && err == nil, fmt.Sprintf("Should not have any errors. NumErrors: %v, err:%v", indexer.NumErrors(), err))
-	expectedBytes := 160
+	assert.T(t, indexer.NumErrors() == 0 && err == nil, fmt.Sprintf("Should not have any errors. NumErrors: %v, err: %v", indexer.NumErrors(), err))
+	expectedBytes := 144
 	assert.T(t, totalBytesSent == expectedBytes, fmt.Sprintf("Should have sent %v bytes but was %v", expectedBytes, totalBytesSent))
 
-	err = indexer.Index("users", "user", "2", "", nil, data, true)
+	err = indexer.Index(testIndex, "user", "2", "", nil, data, true)
 	<-time.After(time.Millisecond * 10) // we need to wait for doc to hit send channel
 	// this will test to ensure that Flush actually catches a doc
 	indexer.Flush()
@@ -87,7 +96,7 @@ func TestBulkIndexerBasic(t *testing.T) {
 	assert.T(t, len(buffers) == 2, fmt.Sprintf("Should have another buffer ct=%d", len(buffers)))
 
 	assert.T(t, indexer.NumErrors() == 0, fmt.Sprintf("Should not have any errors %d", indexer.NumErrors()))
-	expectedBytes = 282 // with refresh
+	expectedBytes = 250 // with refresh
 	assert.T(t, closeInt(totalBytesSent, expectedBytes), fmt.Sprintf("Should have sent %v bytes but was %v", expectedBytes, totalBytesSent))
 
 	indexer.Stop()
@@ -95,6 +104,12 @@ func TestBulkIndexerBasic(t *testing.T) {
 
 // currently broken in drone.io
 func XXXTestBulkUpdate(t *testing.T) {
+	var (
+		buffers        = make([]*bytes.Buffer, 0)
+		totalBytesSent int
+		messageSets    int
+	)
+
 	InitTests(true)
 	c := NewTestConn()
 	c.Port = "9200"
@@ -109,7 +124,7 @@ func XXXTestBulkUpdate(t *testing.T) {
 
 	date := time.Unix(1257894000, 0)
 	user := map[string]interface{}{
-		"name": "smurfs", "age": 22, "date": time.Unix(1257894000, 0), "count": 1,
+		"name": "smurfs", "age": 22, "date": date, "count": 1,
 	}
 
 	// Lets make sure the data is in the index ...
@@ -135,17 +150,23 @@ func XXXTestBulkUpdate(t *testing.T) {
 
 	response, err := c.Get("users", "user", "5", nil)
 	assert.T(t, err == nil, fmt.Sprintf("Should not have any errors  %v", err))
-	newCount := response.Source.(map[string]interface{})["count"]
+	m := make(map[string]interface{})
+	json.Unmarshal([]byte(*response.Source), &m)
+	newCount := m["count"]
 	assert.T(t, newCount.(float64) == 3,
-		fmt.Sprintf("Should have update count: %#v ... %#v", response.Source.(map[string]interface{})["count"], response))
+		fmt.Sprintf("Should have update count: %#v ... %#v", m["count"], response))
 }
 
 func TestBulkSmallBatch(t *testing.T) {
+	var (
+		messageSets int
+	)
+
 	InitTests(true)
 	c := NewTestConn()
 
 	date := time.Unix(1257894000, 0)
-	data := map[string]interface{}{"name": "smurfs", "age": 22, "date": time.Unix(1257894000, 0)}
+	data := map[string]interface{}{"name": "smurfs", "age": 22, "date": date}
 
 	// Now tests small batches
 	indexer := c.NewBulkIndexer(1)
@@ -169,6 +190,33 @@ func TestBulkSmallBatch(t *testing.T) {
 
 }
 
+func TestBulkDelete(t *testing.T) {
+	InitTests(true)
+
+	c := NewTestConn()
+	indexer := c.NewBulkIndexer(1)
+	sentBytes := []byte{}
+
+	indexer.Sender = func(buf *bytes.Buffer) error {
+		sentBytes = append(sentBytes, buf.Bytes()...)
+		return nil
+	}
+
+	indexer.Start()
+
+	indexer.Delete("fake", "fake_type", "1", true)
+
+	indexer.Flush()
+	indexer.Stop()
+
+	sent := string(sentBytes)
+
+	expected := `{"delete":{"_index":"fake","_type":"fake_type","_id":"1","refresh":true}}
+`
+	asExpected := sent == expected
+	assert.T(t, asExpected, fmt.Sprintf("Should have sent '%s' but actually sent '%s'", expected, sent))
+}
+
 func XXXTestBulkErrors(t *testing.T) {
 	// lets set a bad port, and hope we get a conn refused error?
 	c := NewTestConn()
@@ -182,7 +230,7 @@ func XXXTestBulkErrors(t *testing.T) {
 	go func() {
 		for i := 0; i < 20; i++ {
 			date := time.Unix(1257894000, 0)
-			data := map[string]interface{}{"name": "smurfs", "age": 22, "date": time.Unix(1257894000, 0)}
+			data := map[string]interface{}{"name": "smurfs", "age": 22, "date": date}
 			indexer.Index("users", "user", strconv.Itoa(i), "", &date, data, true)
 		}
 	}()

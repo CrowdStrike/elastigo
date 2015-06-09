@@ -39,6 +39,7 @@ type Conn struct {
 	Username       string
 	Password       string
 	Hosts          []string
+	RequestTracer  func(method, url, body string)
 	hp             hostpool.HostPool
 	once           sync.Once
 
@@ -58,6 +59,10 @@ func NewConn() *Conn {
 		Port:           DefaultPort,
 		DecayDuration:  time.Duration(DefaultDecayDuration * time.Second),
 	}
+}
+
+func (c *Conn) SetPort(port string) {
+	c.Port = port
 }
 
 func (c *Conn) SetHosts(newhosts []string) {
@@ -89,8 +94,15 @@ func (c *Conn) initializeHostPool() {
 	// stop the implicitly running request timer.
 	//
 	// A good overview of Epsilon Greedy is here http://stevehanov.ca/blog/index.php?id=132
+	if c.hp != nil {
+		c.hp.Close()
+	}
 	c.hp = hostpool.NewEpsilonGreedy(
 		c.Hosts, c.DecayDuration, &hostpool.LinearEpsilonValueCalculator{})
+}
+
+func (c *Conn) Close() {
+	c.hp.Close()
 }
 
 func (c *Conn) NewRequest(method, path, query string) (*Request, error) {

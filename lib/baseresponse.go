@@ -11,29 +11,111 @@
 
 package elastigo
 
-import ()
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 type BaseResponse struct {
-	Ok      bool        `json:"ok"`
-	Index   string      `json:"_index,omitempty"`
-	Type    string      `json:"_type,omitempty"`
-	Id      string      `json:"_id,omitempty"`
-	Source  interface{} `json:"_source,omitempty"` // depends on the schema you've defined
-	Version int         `json:"_version,omitempty"`
-	Found   bool        `json:"found,omitempty"`
-	Exists  bool        `json:"exists,omitempty"`
-	Matches []string    `json:"matches,omitempty"` // percolate matches
+	Ok      bool             `json:"ok"`
+	Index   string           `json:"_index,omitempty"`
+	Type    string           `json:"_type,omitempty"`
+	Id      string           `json:"_id,omitempty"`
+	Source  *json.RawMessage `json:"_source,omitempty"` // depends on the schema you've defined
+	Version int              `json:"_version,omitempty"`
+	Found   bool             `json:"found,omitempty"`
+	Exists  bool             `json:"exists,omitempty"`
+	Created bool             `json:"created,omitempty"`
+	Matches []string         `json:"matches,omitempty"` // percolate matches
+}
+
+// StatusInt is required because /_optimize, at least, returns its status as
+// strings instead of integers.
+type StatusInt int
+
+func (self *StatusInt) UnmarshalJSON(b []byte) error {
+	s := ""
+	if json.Unmarshal(b, &s) == nil {
+		if i, err := strconv.Atoi(s); err == nil {
+			*self = StatusInt(i)
+			return nil
+		}
+	}
+	i := 0
+	err := json.Unmarshal(b, &i)
+	if err == nil {
+		*self = StatusInt(i)
+	}
+	return err
+}
+
+func (self *StatusInt) MarshalJSON() ([]byte, error) {
+	return json.Marshal(*self)
+}
+
+// StatusBool is required because /_optimize, at least, returns its status as
+// strings instead of booleans.
+type StatusBool bool
+
+func (self *StatusBool) UnmarshalJSON(b []byte) error {
+	s := ""
+	if json.Unmarshal(b, &s) == nil {
+		switch s {
+		case "true":
+			*self = StatusBool(true)
+			return nil
+		case "false":
+			*self = StatusBool(false)
+			return nil
+		default:
+		}
+	}
+	b2 := false
+	err := json.Unmarshal(b, &b2)
+	if err == nil {
+		*self = StatusBool(b2)
+	}
+	return err
+}
+
+func (self *StatusBool) MarshalJSON() ([]byte, error) {
+	return json.Marshal(*self)
 }
 
 type Status struct {
-	Total      int `json:"total"`
-	Successful int `json:"successful"`
-	Failed     int `json:"failed"`
+	Total      StatusInt `json:"total"`
+	Successful StatusInt `json:"successful"`
+	Failed     StatusInt `json:"failed"`
+	Failures   []Failure `json:"failures,omitempty"`
+}
+
+type Failure struct {
+	Index  string    `json:"index"`
+	Shard  StatusInt `json:"shard"`
+	Reason string    `json:"reason"`
+}
+
+func (f Failure) String() string {
+	return fmt.Sprintf("Failed on shard %d on index %s:\n%s", f.Shard, f.Index, f.Reason)
+}
+
+// failures is a convenience type to allow []Failure formated easily in the
+// library
+type failures []Failure
+
+func (f failures) String() string {
+	message := make([]string, len(f))
+	for i, failure := range f {
+		message[i] = failure.String()
+	}
+	return strings.Join(message, "\n")
 }
 
 type ExtendedStatus struct {
-	Ok           bool   `json:"ok"`
-	ShardsStatus Status `json:"_shards"`
+	Ok           StatusBool `json:"ok"`
+	ShardsStatus Status     `json:"_shards"`
 }
 
 type Match struct {

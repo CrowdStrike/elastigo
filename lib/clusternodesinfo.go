@@ -17,7 +17,7 @@ import (
 )
 
 // The cluster nodes info API allows to retrieve one or more (or all) of the cluster nodes information.
-// informatino can be one of jvm, process
+// information can be one of jvm, process
 func (c *Conn) AllNodesInfo() (NodeInfo, error) {
 	return c.NodesInfo([]string{"_all"}, "_all")
 }
@@ -30,12 +30,10 @@ func (c *Conn) NodesInfo(information []string, nodes ...string) (NodeInfo, error
 	if err != nil {
 		return retval, err
 	}
-	if err == nil {
-		// marshall into json
-		jsonErr := json.Unmarshal(body, &retval)
-		if jsonErr != nil {
-			return retval, jsonErr
-		}
+	// marshall into json
+	jsonErr := json.Unmarshal(body, &retval)
+	if jsonErr != nil {
+		return retval, jsonErr
 	}
 	return retval, err
 }
@@ -81,8 +79,9 @@ type Cluster struct {
 }
 
 type OS struct {
-	RefreshInterval     int `json:"refresh_interval,omitempty"`
-	AvailableProcessors int `json:"available_processors,omitempty"`
+	RefreshInterval     int  `json:"refresh_interval,omitempty"`
+	AvailableProcessors int  `json:"available_processors,omitempty"`
+	CPU                 *CPU `json:"cpu,omitempty"`
 }
 
 type CPU struct {
@@ -148,11 +147,11 @@ type ThreadPool struct {
 }
 
 type ThreadPoolConfig struct {
-	Type      string `json:"type,omitempty"`
-	Min       int    `json:"min,omitempty"`
-	Max       int    `json:"max,omitempty"`
-	QueueSize string `json:"queue_size,omitempty"`
-	KeepAlive string `json:"keep_alive,omitempty"`
+	Type      string      `json:"type,omitempty"`
+	Min       int         `json:"min,omitempty"`
+	Max       int         `json:"max,omitempty"`
+	QueueSize interface{} `json:"queue_size,omitempty"` // Either string or -1
+	KeepAlive string      `json:"keep_alive,omitempty"`
 }
 
 type Network struct {

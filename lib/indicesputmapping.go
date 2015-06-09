@@ -23,11 +23,47 @@ type Mapping map[string]MappingOptions
 type MappingOptions struct {
 	Id         IdOptions              `json:"_id"`
 	Timestamp  TimestampOptions       `json:"_timestamp"`
+	Analyzer   *AnalyzerOptions       `json:"_analyzer,omitempty"`
+	Parent     *ParentOptions         `json:"_parent,omitempty"`
+	Routing    *RoutingOptions        `json:"_routing,omitempty"`
+	Size       *SizeOptions           `json:"_size,omitempty"`
+	Source     *SourceOptions         `json:"_source,omitempty"`
+	Type       *TypeOptions           `json:"_type,omitempty"`
 	Properties map[string]interface{} `json:"properties"`
 }
 
 type TimestampOptions struct {
 	Enabled bool `json:"enabled"`
+}
+
+type AnalyzerOptions struct {
+	Path  string `json:"path,omitempty"`
+	Index string `json:"index,omitempty"`
+}
+
+type ParentOptions struct {
+	Type string `json:"type"`
+}
+
+type RoutingOptions struct {
+	Required bool   `json:"required,omitempty"`
+	Path     string `json:"path,omitempty"`
+}
+
+type SizeOptions struct {
+	Enabled bool `json:"enabled,omitempty"`
+	Store   bool `json:"store,omitempty"`
+}
+
+type SourceOptions struct {
+	Enabled  bool     `json:"enabled,omitempty"`
+	Includes []string `json:"includes,omitempty"`
+	Excludes []string `json:"excludes,omitempty"`
+}
+
+type TypeOptions struct {
+	Store bool   `json:"store,omitempty"`
+	Index string `json:"index,omitempty"`
 }
 
 type IdOptions struct {
@@ -69,6 +105,12 @@ func (c *Conn) PutMapping(index string, typeName string, instance interface{}, o
 	return nil
 }
 
+//Same as PutMapping, but takes a []byte for mapping and provides no check of structure
+func (c *Conn) PutMappingFromJSON(index string, typeName string, mapping []byte) error {
+	_, err := c.DoCommand("PUT", fmt.Sprintf("/%s/%s/_mapping", index, typeName), nil, string(mapping))
+	return err
+}
+
 func getProperties(t reflect.Type, prop map[string]interface{}) {
 	n := t.NumField()
 	for i := 0; i < n; i++ {
@@ -81,36 +123,43 @@ func getProperties(t reflect.Type, prop map[string]interface{}) {
 			name = field.Name
 		}
 
-		attrMap := make(map[string]string)
-		tag := field.Tag.Get("elastic")
-		if tag == "" {
+		attrMap := make(map[string]interface{})
+		attrs := splitTag(field.Tag.Get("elastic"))
+		for _, attr := range attrs {
+			keyvalue := strings.Split(attr, ":")
+			attrMap[keyvalue[0]] = keyvalue[1]
+		}
 
-			// We are looking for tags on any nested struct, independently of
+		if len(attrMap) == 0 || attrMap["type"] == "nested" {
+
+			// We are looking for tags on any inner struct, independently of
 			// whether the field is a struct, a pointer to struct, or a slice of structs
 			targetType := field.Type
 			if targetType.Kind() == reflect.Ptr ||
 				targetType.Kind() == reflect.Slice {
 				targetType = field.Type.Elem()
 			}
-
 			if targetType.Kind() == reflect.Struct {
 				if field.Anonymous {
 					getProperties(targetType, prop)
 				} else {
-					nestedProp := make(map[string]interface{})
-					getProperties(targetType, nestedProp)
-					prop[name] = map[string]interface{}{
-						"properties": nestedProp,
-					}
+					innerStructProp := make(map[string]interface{})
+					getProperties(targetType, innerStructProp)
+					attrMap["properties"] = innerStructProp
 				}
 			}
-			continue
 		}
-		attrs := strings.Split(tag, ",")
-		for _, attr := range attrs {
-			keyvalue := strings.Split(attr, ":")
-			attrMap[keyvalue[0]] = keyvalue[1]
+		if len(attrMap) != 0 {
+			prop[name] = attrMap
 		}
-		prop[name] = attrMap
+	}
+}
+
+func splitTag(tag string) []string {
+	tag = strings.Trim(tag, " ")
+	if tag == "" {
+		return []string{}
+	} else {
+		return strings.Split(tag, ",")
 	}
 }

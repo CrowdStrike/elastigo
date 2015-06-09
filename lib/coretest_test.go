@@ -22,7 +22,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"testing"
 	"time"
 )
 
@@ -34,11 +33,17 @@ usage:
 
 */
 
+const (
+	testIndex = "github"
+)
+
 var (
 	bulkStarted       bool
 	hasStartedTesting bool
 	hasLoadedData     bool
+	sleepAfterLoad    bool
 	loadData          *bool = flag.Bool("loaddata", false, "This loads a bunch of test data into elasticsearch for testing")
+	sleep             *int  = flag.Int("sleep", 0, "Post bulk loading sleep test to make drone.io work")
 )
 
 func InitTests(startIndexer bool) *Conn {
@@ -61,7 +66,12 @@ func InitTests(startIndexer bool) *Conn {
 		}
 		b.Stop()
 	}
+	c.Flush("_all")
 	c.Refresh("_all")
+	if !sleepAfterLoad {
+		time.Sleep(time.Duration(*sleep) * time.Second)
+	}
+	sleepAfterLoad = true
 	return c
 }
 
@@ -71,21 +81,12 @@ func NewTestConn() *Conn {
 	return c
 }
 
-// dumb simple assert for testing, printing
-//    Assert(len(items) == 9, t, "Should be 9 but was %d", len(items))
-func Assert(is bool, t *testing.T, format string, args ...interface{}) {
-	if is == false {
-		log.Printf(format, args...)
-		t.Fail()
-	}
-}
-
 // Wait for condition (defined by func) to be true, a utility to create a ticker
 // checking every 100 ms to see if something (the supplied check func) is done
 //
-//   WaitFor(func() bool {
+//   waitFor(func() bool {
 //      return ctr.Ct == 0
-//   },10)
+//   }, 10)
 //
 // @timeout (in seconds) is the last arg
 func waitFor(check func() bool, timeoutSecs int) {
@@ -104,9 +105,6 @@ func waitFor(check func() bool, timeoutSecs int) {
 	}
 }
 
-func TestFake(t *testing.T) {
-}
-
 type GithubEvent struct {
 	Url     string
 	Created time.Time `json:"created_at"`
@@ -116,16 +114,19 @@ type GithubEvent struct {
 // This loads test data from github archives (~6700 docs)
 func LoadTestData() {
 	c := NewConn()
+	c.Domain = *eshost
+
+	c.DeleteIndex(testIndex)
 
 	docCt := 0
 	errCt := 0
 	indexer := c.NewBulkIndexer(1)
 	indexer.Sender = func(buf *bytes.Buffer) error {
-		log.Printf("Sent %d bytes total %d docs sent", buf.Len(), docCt)
+		// log.Printf("Sent %d bytes total %d docs sent", buf.Len(), docCt)
 		req, err := c.NewRequest("POST", "/_bulk", "")
 		if err != nil {
 			errCt += 1
-			log.Fatalf("ERROR: ", err)
+			log.Fatalf("ERROR: %v", err)
 			return err
 		}
 		req.SetBody(buf)
@@ -140,7 +141,7 @@ func LoadTestData() {
 		if httpStatusCode != 200 {
 			log.Fatalf("Not 200! %d %q\n", httpStatusCode, buf.String())
 		}
-		return err
+		return nil
 	}
 	indexer.Start()
 	resp, err := http.Get("http://data.githubarchive.org/2012-12-10-15.json.gz")
@@ -163,11 +164,12 @@ func LoadTestData() {
 	h := md5.New()
 	for {
 		line, err := r.ReadBytes('\n')
-		if err != nil && err != io.EOF {
-			log.Println("FATAL:  could not read line? ", err)
-		} else if err != nil {
-			indexer.Flush()
-			break
+		if err != nil {
+			if err == io.EOF {
+				indexer.Flush()
+				break
+			}
+			log.Fatalf("could not read line: %v", err)
 		}
 		if err := json.Unmarshal(line, &ge); err == nil {
 			// create an "ID"
@@ -177,7 +179,7 @@ func LoadTestData() {
 				log.Println("HM, already exists? ", ge.Url)
 			}
 			docsm[id] = true
-			indexer.Index("github", ge.Type, id, "", &ge.Created, line, true)
+			indexer.Index(testIndex, ge.Type, id, "", &ge.Created, line, true)
 			docCt++
 		} else {
 			log.Println("ERROR? ", string(line))
@@ -191,4 +193,6 @@ func LoadTestData() {
 	if len(docsm) != docCt {
 		panic(fmt.Sprintf("Docs didn't match?   %d:%d", len(docsm), docCt))
 	}
+	c.Flush(testIndex)
+	c.Refresh(testIndex)
 }

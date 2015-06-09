@@ -58,6 +58,7 @@ func (s *SearchDsl) Bytes(conn *Conn) ([]byte, error) {
 func (s *SearchDsl) Result(conn *Conn) (*SearchResult, error) {
 	var retval SearchResult
 	body, err := s.Bytes(conn)
+	retval.RawJSON = body
 	if err != nil {
 		u.Errorf("%v", err)
 		return nil, err
@@ -191,5 +192,10 @@ func (s *SearchDsl) Sort(sort ...*SortDsl) *SearchDsl {
 
 func (s *SearchDsl) Scroll(duration string) *SearchDsl {
 	s.args["scroll"] = duration
+	return s
+}
+
+func (s *SearchDsl) SearchType(searchType string) *SearchDsl {
+	s.args["search_type"] = searchType
 	return s
 }

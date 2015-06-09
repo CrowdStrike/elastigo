@@ -1,4 +1,4 @@
-// Copyright 2013 Matthew Baird
+// Copyright 2015 Niels Freier
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -13,33 +13,19 @@ package elastigo
 
 import (
 	"encoding/json"
-	"fmt"
 )
 
-// The delete API allows you to delete a mapping through an API.
-func (c *Conn) DeleteMapping(index string, typeName string) (BaseResponse, error) {
-	var retval BaseResponse
+func (c *Conn) NodesStats() (NodeStatsResponse, error) {
+	var retval NodeStatsResponse
 
-	if len(index) == 0 {
-		return retval, fmt.Errorf("You must specify at least one index to delete a mapping from")
-	}
-
-	if len(typeName) == 0 {
-		return retval, fmt.Errorf("You must specify at least one mapping to delete")
-	}
-
-	// As documented at http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/indices-delete-mapping.html
-	url := fmt.Sprintf("/%s/%s", index, typeName)
-
-	body, err := c.DoCommand("DELETE", url, nil, nil)
+	body, err := c.DoCommand("GET", "/_nodes/stats", nil, nil)
 	if err != nil {
 		return retval, err
 	}
-
+	// marshall into json
 	jsonErr := json.Unmarshal(body, &retval)
 	if jsonErr != nil {
 		return retval, jsonErr
 	}
-
 	return retval, err
 }
